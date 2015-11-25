@@ -10,8 +10,10 @@
 #include <time.h>
 using namespace std;
 
+#define N_THREADS 10;
+
 __global__ void stddevPointer(double *sample, double *output, int *n) {
-    int sampleIndex = threadIdx.x;
+    int sampleIndex = threadIdx.x + blockIdx.x * N_THREADS;
     double out = 0;
     for (int j = 0; j < *n; j++) {
         out += sample[sampleIndex * *n + j];
@@ -42,10 +44,10 @@ double diffclock(clock_t clock1, clock_t clock2)
 }
 
 int main(int argc, const char * argv[]) {
-    int nBlocks = 1;
-    int nThreads = 10;
+    int nBlocks = 100;
+    int nThreads = N_THREADS;
     int m = nBlocks * nThreads;
-    int n = 1000000;
+    int n = 100000;
 
     int sizeOfSample = n * m * sizeof(double);
     int sizeOfOutput = m * sizeof(double);
