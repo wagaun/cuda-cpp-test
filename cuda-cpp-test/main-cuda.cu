@@ -10,39 +10,27 @@
 #include <time.h>
 using namespace std;
 
-void stddevPointer(double *sample, double *output, int *n) {
+__global__ void stddevPointer(double *sample, double *output, int *n) {
+    int sampleIndex = threadIdx.x;
     double out = 0;
     for (int j = 0; j < *n; j++) {
-        out += sample[j];
+        out += sample[sampleIndex * *n + j];
     }
-    *output = out / (*n - 1);
+    output[sampleIndex] = out / (*n - 1);
 }
 
-double* stddev(double **samples, int m, int n) {
-    double* out = (double*) malloc(m * sizeof(double));
-    for (int i = 0; i < m; i++) {
-        stddevPointer(samples[i], &out[i], &n);
-        cout << "stddev " << out[i] << endl;
-    }
-    return out;
-}
-
-double** generateRandomMatrix(int m, int n) {
-    double **matrix;
-    matrix = (double **)malloc(m * sizeof(double*));
+double* generateRandomMatrix(int m, int n) {
+    double *matrix;
+    matrix = (double *)malloc(m * n * sizeof(double));
     for(int i = 0; i < m; i++) {
-        matrix[i] = (double *)malloc(n * sizeof(double));
         for(int j = 0; j < n; j++) {
-            matrix[i][j] = (double) rand() / RAND_MAX;
+            matrix[i * n + j] = (double) rand() / RAND_MAX;
         }
     }
     return matrix;
 }
 
-void freeMatrix(double **matrix, int m) {
-    for(int i = 0; i < m; i++) {
-        free(matrix[i]);
-    }
+void freeMatrix(double *matrix) {
     free(matrix);
 }
 
@@ -54,17 +42,44 @@ double diffclock(clock_t clock1, clock_t clock2)
 }
 
 int main(int argc, const char * argv[]) {
-    int m = 100;
+    int nBlocks = 1;
+    int nThreads = 10;
+    int m = nBlocks * nThreads;
     int n = 1000000;
-    double **sample = generateRandomMatrix(m, n);
+
+    int sizeOfSample = n * m * sizeof(double);
+    int sizeOfOutput = m * sizeof(double);
+    int sizeOfInt = sizeof(int);
+
+    double *sample = generateRandomMatrix(m, n);
+
+    double *deviceSample;
+    double *deviceOutput;
+    int *deviceN;
+    cudaMalloc((void **) &deviceSample, sizeOfSample);
+    cudaMalloc((void **) &deviceOutput, sizeOfOutput);
+    cudaMalloc((void **) &deviceN, sizeOfInt);
+    cudaMemcpy(deviceSample, sample, sizeOfSample, cudaMemcpyHostToDevice);
+    cudaMemcpy(deviceN, &n, sizeOfInt, cudaMemcpyHostToDevice);
 
     clock_t start = clock();
-    double* output = stddev(sample, m, n);
+    // Launch stddevPointer() kernel on GPU
+    stddevPointer<<<nBlocks,nThreads>>>(deviceSample, deviceOutput, deviceN);
     clock_t end = clock();
+
+    double* output = (double*) malloc(sizeOfOutput);
+    cudaMemcpy(output, deviceOutput, sizeOfOutput, cudaMemcpyDeviceToHost);
+    for (int i = 0; i < m; i++) {
+        cout << "stddev " << output[i] << endl;
+    }
 
     cout << "Took " << diffclock(end, start) << "ms" << endl;
 
-    freeMatrix(sample, m);
+    freeMatrix(sample);
     free(output);
+
+    cudaFree(deviceSample);
+    cudaFree(deviceOutput);
+    cudaFree(deviceN);
     return 0;
 }
