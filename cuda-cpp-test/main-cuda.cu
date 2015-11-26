@@ -1,6 +1,6 @@
 //
-//  main.cpp
-//  cuda-cpp-test
+//  This CUDA test program calculates standard deviations of randomly generated samples of SAMPLE_SIZE.
+//  The number of samples is defined by the variable nSamples in the main function.
 //
 //  Created by Wagner Tsuchiya on 11/24/15.
 //  Copyright © 2015 Wagner Tsuchiya. All rights reserved.
@@ -10,30 +10,35 @@
 #include <time.h>
 using namespace std;
 
-#define N_THREADS 10;
+#define SAMPLE_SIZE 1000;
+#define N_BLOCKS 100;
 
-__global__ void stddevPointer(double *sample, double *output, int *n) {
-    int sampleIndex = threadIdx.x + blockIdx.x * N_THREADS;
-    double out = 0;
-    for (int j = 0; j < *n; j++) {
-        out += sample[sampleIndex * *n + j];
-    }
-    output[sampleIndex] = out / (*n - 1);
-}
-
-double* generateRandomMatrix(int m, int n) {
-    double *matrix;
-    matrix = (double *)malloc(m * n * sizeof(double));
-    for(int i = 0; i < m; i++) {
-        for(int j = 0; j < n; j++) {
-            matrix[i * n + j] = (double) rand() / RAND_MAX;
+/*
+ * Function that calculates the standard deviation of a sample.
+ * The input is an array with sampleArraySize that contains 1-N samples of sampleSize.
+ * E.g: {s(0, 0), s(0, 1), s(1, 0), s(1, 1), s(3, 0), s(3, 1)}, with sample size 2 and sampleArraySize 6.
+ */
+__global__ void stddevPointer(double *sample, double *output, int sampleSize, int sampleArraySize) {
+    // Check the sizeof arrays
+    int outputIndex = threadIdx.x + blockIdx.x * blockDim.x;
+    int sampleIndex = outputIndex * sampleSize;
+    output[outputIndex] = 0;
+    for (int j = 0; j < sampleSize; j++) {
+        if(sampleIndex + j >= sampleArraySize) {
+            output[outputIndex] = 42;
+            return;
         }
+        output[outputIndex] += sample[sampleIndex + j];
     }
-    return matrix;
+    output[outputIndex] /= (sampleSize - 1);
 }
 
-void freeMatrix(double *matrix) {
-    free(matrix);
+double* generateRandomArray(int size) {
+    double *array = (double *)malloc(size * sizeof(double));
+    for(int i = 0; i < size; i++) {
+        array[i] = (double) rand() / RAND_MAX;
+    }
+    return array;
 }
 
 double diffclock(clock_t clock1, clock_t clock2)
@@ -44,44 +49,42 @@ double diffclock(clock_t clock1, clock_t clock2)
 }
 
 int main(int argc, const char * argv[]) {
-    int nBlocks = 100;
-    int nThreads = N_THREADS;
-    int m = nBlocks * nThreads;
-    int n = 100000;
+    int nSamples = 100000;
+    int nBlocks = N_BLOCKS;
+    int nThreads = nSamples / nBlocks;
+    int sampleSize = SAMPLE_SIZE;
 
-    int sizeOfSample = n * m * sizeof(double);
-    int sizeOfOutput = m * sizeof(double);
-    int sizeOfInt = sizeof(int);
+    cout << "Threads: " << nThreads << endl;
+    cout << "Blocks: " << nBlocks << endl;
 
-    double *sample = generateRandomMatrix(m, n);
+    int sizeOfSampleArray = sampleSize * nSamples * sizeof(double);
+    int sizeOfOutput = nSamples * sizeof(double);
+
+    double *sample = generateRandomArray(nSamples * sampleSize);
 
     double *deviceSample;
     double *deviceOutput;
-    int *deviceN;
-    cudaMalloc((void **) &deviceSample, sizeOfSample);
+    cudaMalloc((void **) &deviceSample, sizeOfSampleArray);
     cudaMalloc((void **) &deviceOutput, sizeOfOutput);
-    cudaMalloc((void **) &deviceN, sizeOfInt);
-    cudaMemcpy(deviceSample, sample, sizeOfSample, cudaMemcpyHostToDevice);
-    cudaMemcpy(deviceN, &n, sizeOfInt, cudaMemcpyHostToDevice);
+    cudaMemcpy(deviceSample, sample, sizeOfSampleArray, cudaMemcpyHostToDevice);
 
     clock_t start = clock();
     // Launch stddevPointer() kernel on GPU
-    stddevPointer<<<nBlocks,nThreads>>>(deviceSample, deviceOutput, deviceN);
+    stddevPointer<<<nBlocks,nThreads>>>(deviceSample, deviceOutput, sampleSize, sizeOfSampleArray);
     clock_t end = clock();
 
     double* output = (double*) malloc(sizeOfOutput);
     cudaMemcpy(output, deviceOutput, sizeOfOutput, cudaMemcpyDeviceToHost);
-    for (int i = 0; i < m; i++) {
-        cout << "stddev " << output[i] << endl;
+    for (int i = 0; i < nSamples; i++) {
+        cout << "Std.Dev. #" << i + 1 << ": " << output[i] << endl;
     }
 
     cout << "Took " << diffclock(end, start) << "ms" << endl;
 
-    freeMatrix(sample);
+    free(sample);
     free(output);
 
     cudaFree(deviceSample);
     cudaFree(deviceOutput);
-    cudaFree(deviceN);
     return 0;
 }
